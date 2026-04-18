@@ -1,0 +1,53 @@
+name: macos-determinate.yml
+
+on: [pull_request, merge_group, workflow_dispatch]
+
+jobs:
+  install-macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-15]
+        guest-arch: ['aarch64']
+      fail-fast: false
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HOST_ARCH: ${{ matrix.os == 'macos-15' && 'aarch64' || 'unknown' }}
+      GUEST_HOST_NAME: "nixos"
+      # For macos-15, force `--vm-type qemu` since GitHub runners don't support VZ and Lima 2.0.x defaults to VZ even for x86_64 guests
+      LIMA_VM_TYPE: ${{ matrix.os == 'macos-15' && '--vm-type qemu' || '' }}
+      QEMU_SYSTEM_AARCH64: ${{ matrix.os == 'macos-15' && 'qemu-system-aarch64 -machine virt -cpu max' || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update Homebrew
+        run: |
+          brew update
+
+      - name: Install QEMU
+        run: |
+          brew install qemu
+
+      - name: Install Lima
+        run: |
+          brew install lima
+
+      - name: Start NixOS Lima VM
+        run: |
+          limactl start --yes --memory 12 ${{ env.LIMA_VM_TYPE }} --arch ${{ matrix.guest-arch }} --name=${{ env.GUEST_HOST_NAME }} --network=lima:user-v2 github:nixos-lima
+
+      - name: Rebuild NixOS with Determinate and Restart
+        run: |
+          ./rebuild-guest.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: artifacts-os-${{ matrix.os }}-guest-${{ matrix.guest-arch }}-lima-errlog
+          path: |
+            ~/.lima/nixos/*
+            !~/.lima/nixos/*.sock
+            !~/.lima/nixos/basedisk
+            !~/.lima/nixos/diffdisk
